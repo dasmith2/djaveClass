@@ -1,11 +1,12 @@
 from collections import namedtuple
 import re
 
+from django.db.models.fields import NOT_PROVIDED
 from django.db.models.fields.reverse_related import ManyToOneRel
 
 ModelField = namedtuple('ModelField', [
     'name', 'display_name', 'help_text', 'can_filter', 'type',
-    'foreign_key_to', 'max_length', 'required', 'editable'])
+    'foreign_key_to', 'max_length', 'required', 'editable', 'default'])
 
 DATE_TIME = 'DateTime'
 DATE = 'Date'
@@ -23,6 +24,13 @@ def _get_django_model_fields(cls):
   return cls._meta.get_fields()
 
 
+def model_fields_lookup(model):
+  lookup = {}
+  for field in model_fields(model):
+    lookup[field.name] = field
+  return lookup
+
+
 def model_fields(model, specific_field=None):
   fields = []
   for field in _get_django_model_fields(model):
@@ -32,12 +40,17 @@ def model_fields(model, specific_field=None):
       continue
     if isinstance(field, ManyToOneRel):
       continue
+    if 'child_class' == name:
+      continue
 
     can_filter = field.db_index
     help_text = field.help_text
     field_type = field.get_internal_type()
     required = not field.null
     editable = field.editable
+    default = field.default
+    if default is NOT_PROVIDED:
+      default = None
     foreign_key_to = None
     max_length = None
 
@@ -65,21 +78,24 @@ def model_fields(model, specific_field=None):
         field_type = FLOAT
       if field_type == CHAR:
         max_length = field.max_length
+      if field_type in [CHAR, TEXT] and field.blank:
+        required = False
       if field_type not in TYPES:
         raise Exception(
             'I am not familiar with the {} type'.format(field_type))
 
-    field = ModelField(
-        name, _display_name(name), help_text, can_filter, field_type,
-        foreign_key_to, max_length, required, editable)
+      if name.find('_currency') > 0:
+        required = True
+        editable = True
+        help_text = '"USD" typically'
+
+    model_field = ModelField(
+        name, field.verbose_name.capitalize(), help_text, can_filter,
+        field_type, foreign_key_to, max_length, required, editable, default)
     if name == specific_field:
-      return field
+      return model_field
     else:
-      fields.append(field)
+      fields.append(model_field)
   if specific_field:
     return None
   return fields
-
-
-def _display_name(field_name):
-  return field_name.capitalize().replace('_', ' ')

@@ -27,8 +27,8 @@ class RmOldManager(models.Manager):
   a month old should inherit from RmOldManager. The class itself should have a
   created datetime field.
 
-  Then when you call djaveClassMagic.models.rm_old.rm_old it'll rm_old from your new
-  class now too."""
+  Then when you call djaveClassMagic.models.rm_old.rm_old it'll rm_old from
+  your new class now too."""
   def keep_for_days(self):
     return 60
 

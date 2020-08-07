@@ -4,7 +4,7 @@ try:
 except AppRegistryNotReady:
   raise Exception(
       'The last time this happened it was because I put '
-      '`from djavError.models import log_error` in djavError.__init__')
+      '`from djavError.log_error import log_error` in djavError.__init__')
 from django.db import models
 
 

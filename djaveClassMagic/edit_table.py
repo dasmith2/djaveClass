@@ -6,45 +6,62 @@ from djaveForm.button import Button
 from djaveForm.default_widget import default_widget
 from djaveForm.form import Form
 from djaveTable.table import Table, Cell
-from djaveTable.cell_content import Tooltip, DisappearingFeedback, Feedback
+from djaveTable.cell_content import (
+    Tooltip, DisappearingFeedback, Feedback, InHref)
 from djmoney.money import Money
 
 
 WIRE_UP_CONFIRM_DELETE = """
-<script>
 $(function() {
   $('.delete').click(function() {
     return confirm('Delete?');
   });
-});
-</script>
-"""
+});"""
 
 
 class EditTable(Table):
-  def __init__(self, model, request_data, instance=None, extra_buttons=None):
+  def __init__(
+      self, model, request_data, cancel_url, instance=None, extra_buttons=None,
+      show_delete=True):
     self.model = model
     self.model_fields = model_fields(model)
     self.request_data = request_data
     self.instance = instance
-    self.extra_buttons = extra_buttons
+    self.extra_buttons = extra_buttons or []
+    self.show_delete = show_delete
 
     self.save_button = Button('Save', button_type='submit')
     self.delete_button = Button('Delete', button_type='delete')
+    self.cancel_button = InHref('Cancel', cancel_url, button=True)
 
-    self.form = Form([self.save_button, self.delete_button])
+    self.form = Form(
+        [self.save_button, self.delete_button] + self.extra_buttons)
     self._saved = False
     self._deleted = False
 
     question = 'Delete this {}?'.format(model.__name__)
     confirm_delete_js = WIRE_UP_CONFIRM_DELETE.replace('Delete?', question)
-    super().__init__(js=confirm_delete_js, classes=['margin-top'])
+    super().__init__(
+        js=confirm_delete_js, classes=['margin-top', 'edit-table'])
+    self.append_js(
+        "setup_edit_field_turns_yellow('.edit-table', 'tr');")
 
+    # You have to add_rows before you handle_clicks because handle_clicks has
+    # to check to see if the widgets are valid.
+    self._redo_rows()
+    self.handle_clicks()
+
+    if self.saved():
+      # But if there's a readonly field that changed based on what the user
+      # saved, then the old call to add_rows might have out of date data, so
+      # we'd better redo the rows.
+      self._redo_rows()
+      self.buttons_cell.cell_contents.append(DisappearingFeedback())
+
+  def _redo_rows(self):
+    self.rows = []
     self.buttons_cell = Cell([], additional_attrs={'colspan': 2})
     self.add_rows()
-    self.handle_clicks()
-    if self.saved():
-      self.buttons_cell.cell_contents.append(DisappearingFeedback())
 
   def add_rows(self):
     raise NotImplementedError('add_rows')
@@ -59,11 +76,12 @@ class EditTable(Table):
     return self.model()
 
   def handle_clicks(self):
-    self.form.set_form_data(self.request_data)
-    if self.save_button.get_was_clicked():
-      self.handle_save_click()
-    if self.delete_button.get_was_clicked():
-      self.handle_delete_click()
+    if self.form.a_button_was_clicked(self.request_data):
+      self.form.set_form_data(self.request_data)
+      if self.save_button.get_was_clicked():
+        self.handle_save_click()
+      if self.delete_button.get_was_clicked():
+        self.handle_delete_click()
 
   def handle_save_click(self):
     if self.is_valid():
@@ -106,8 +124,8 @@ class EditTable(Table):
     return self._deleted
 
   def add_final_row(self):
-    buttons = [self.save_button]
-    if self.instance:
+    buttons = [self.save_button, self.cancel_button]
+    if self.instance and self.show_delete:
       buttons.append(self.delete_button)
     if self.extra_buttons:
       buttons.extend(self.extra_buttons)
@@ -118,21 +136,34 @@ class EditTable(Table):
     for field_name in field_names:
       self.add_field_row(field_name)
 
-  def add_field_row(self, field_name, widget=None):
+  def add_field_row(self, field_name, widget=None, read_only=False):
     field = self._get_field(field_name)
-    if not widget:
-      widget = default_widget(field)
-    if self.instance:
-      default = getattr(self.instance, field_name)
-      if default is not None:
-        if isinstance(default, Money):
-          default = default.amount
-        widget.default = default
+    current_value = self.get_current_value(field)
+    second_cell = current_value
+
+    if not read_only:
+      if not widget:
+        widget = default_widget(field)
+      if current_value:
+        widget.default = current_value
+      self.form.new_form_element(widget)
+      second_cell = widget
+
     label = field.display_name
     if field.help_text:
       label = Tooltip(field.display_name, field.help_text)
-    self.create_row([label, widget])
-    self.form.new_form_element(widget)
+    self.create_row([label, second_cell])
+
+  def get_current_value(self, field):
+    value = None
+    if self.instance:
+      value = getattr(self.instance, field.name)
+      if value is not None:
+        if isinstance(value, Money):
+          value = value.amount
+    else:
+      return field.default
+    return value
 
   def _get_field(self, field_name):
     for field in self.model_fields:
